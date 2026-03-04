@@ -1,0 +1,191 @@
+// prisma/schema.prisma
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = "file:./dev.db"
+}
+
+// ── AUTHENTICATION ────────────────────────────────────────────────────────────
+
+model User {
+  id             String    @id @default(cuid())
+  name           String?
+  email          String?   @unique
+  passwordHash   String?
+  role           String    @default("VIEWER") // Using String for SQLite compatibility (enum not supported in SQLite)
+  isActive       Boolean   @default(true)
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  obracuni       Obracun[]
+  odluke         Odluka[]
+  auditLogs      AuditLog[]
+}
+
+// ── EMPLOYEES ─────────────────────────────────────────────────────────────────
+
+model Zaposlenik {
+  id              Int              @id @default(autoincrement())
+  imeIPrezime     String
+  kategorija      String           // "A", "B", "C", "D"
+  uloga           String
+  netoOsnova      Decimal
+  datumZaposlenja DateTime?
+  godinStaza      Int              @default(0)
+  aktivan         Boolean          @default(true)
+  napomena        String?
+  userId          String?          @unique
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+  updatedBy       String?
+  obracuniStavke  ObracunStavka[]
+  ucinci          Ucinak[]
+}
+
+model Ucinak {
+  id           Int              @id @default(autoincrement())
+  zaposlenikId Int
+  godina       Int
+  ocjena       String           // "IZUZETAN", etc.
+  napomena     String?
+  ocjenioId    String
+  createdAt    DateTime         @default(now())
+  zaposlenik   Zaposlenik       @relation(fields: [zaposlenikId], references: [id])
+  @@unique([zaposlenikId, godina])
+}
+
+// ── FINANCIAL PARAMETERS (Admin-configurable, versioned) ─────────────────────
+
+model ParametriPlata {
+  id                    Int      @id @default(autoincrement())
+  verzija               String   @unique  // e.g. "2026-03"
+  efektivanOd           DateTime
+  doprinosiIzPlate      Decimal
+  doprinosiNaPlatu      Decimal
+  porezStopa            Decimal
+  licniOdbitak          Decimal
+  topliObrok            Decimal
+  minimalnaPlata        Decimal
+  aktivan               Boolean  @default(false)
+  kreiraoId             String
+  kreiraoIme            String
+  napomena              String?
+  createdAt             DateTime @default(now())
+  obracuni              Obracun[]
+}
+
+// ── PAYROLL ───────────────────────────────────────────────────────────────────
+
+model Obracun {
+  id              Int              @id @default(autoincrement())
+  period          String           // "2026-03"
+  periodDatum     DateTime         // 2026-03-01
+  parametriId     Int
+  statusObracuna  String           // "NACRT", "U_PREGLEDU", "ODOBREN", "ISPLACEN", "ARHIVIRAN"
+  ukupnoNeto      Decimal
+  ukupnoBruto1    Decimal
+  ukupnoBruto2    Decimal
+  ukupnoTopliObrok Decimal
+  ukupnoTrosak    Decimal
+  napomena        String?
+  kreiraoId       String
+  odobrioPotpisId String?
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+  parametri       ParametriPlata   @relation(fields: [parametriId], references: [id])
+  kreirao         User             @relation(fields: [kreiraoId], references: [id])
+  stavke          ObracunStavka[]
+}
+
+model ObracunStavka {
+  id              Int        @id @default(autoincrement())
+  obracunId       Int
+  zaposlenikId    Int
+  netoOsnova      Decimal
+  dodatakStaz     Decimal    @default(0)
+  dodVarijabilni  Decimal    @default(0)
+  netoUkupno      Decimal
+  bruto1          Decimal
+  doprinoziIz     Decimal
+  porezBaza       Decimal
+  porezIznos      Decimal
+  bruto2          Decimal
+  topliObrok      Decimal
+  naknPrevoz      Decimal    @default(0)
+  ukupnoTrosak    Decimal
+  napomena        String?
+  obracun         Obracun    @relation(fields: [obracunId], references: [id], onDelete: Cascade)
+  zaposlenik      Zaposlenik @relation(fields: [zaposlenikId], references: [id])
+  @@unique([obracunId, zaposlenikId])
+}
+
+// ── FINANCIAL DATA UPLOADS ────────────────────────────────────────────────────
+
+model PoslovniPodaci {
+  id              Int      @id @default(autoincrement())
+  period          String   // "2026-Q1" or "2026-03"
+  tipPerioda      String   // "MONTH" | "QUARTER" | "YEAR"
+  prihodi         Decimal?
+  rashodi         Decimal?
+  brutoPlate      Decimal?
+  zakup           Decimal?
+  gotovina        Decimal?
+  brojDjece       Int?
+  napomena        String?
+  izvorFajl       String?
+  uploadovaoId    String
+  verifikovano    Boolean  @default(false)
+  createdAt       DateTime @default(now())
+}
+
+// ── PROTECTIVE CLAUSES STATUS ─────────────────────────────────────────────────
+
+model ZastitnaKlauzula {
+  id              Int           @id @default(autoincrement())
+  tip             String        // "TRZISNI_POREMECAJ", etc.
+  statusAktivna   Boolean       @default(false)
+  aktiviranaAt    DateTime?
+  deaktiviranaAt  DateTime?
+  obrazlozenje    String?
+  odlukaUOBroj    String?
+  aktiviraoId     String
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+}
+
+// ── BOARD DECISIONS ───────────────────────────────────────────────────────────
+
+model Odluka {
+  id          Int      @id @default(autoincrement())
+  broj        String   @unique
+  datum       DateTime
+  opis        String
+  tip         String   // "PLATE", "PARAMETRI", "KLAUZULA", "OSTALO"
+  donioId     String
+  fajlUrl     String?
+  createdAt   DateTime @default(now())
+  donio       User     @relation(fields: [donioId], references: [id])
+}
+
+// ── AUDIT LOG (IMMUTABLE — no updates, no deletes ever) ───────────────────────
+
+model AuditLog {
+  id          BigInt   @id @default(autoincrement())
+  timestamp   DateTime @default(now())
+  userId      String
+  userEmail   String
+  userRole    String
+  akcija      String   // "CREATE", "UPDATE", "DELETE", "LOGIN", "EXPORT", "CALC"
+  entitet     String   // "Zaposlenik", "Obracun", "Parametri", etc.
+  entitetId   String?
+  starVrijednost String? // JSON string
+  novaVrijednost String? // JSON string
+  ipAdresa    String?
+  userAgent   String?
+  uspjeh      Boolean  @default(true)
+  greskaOpis  String?
+  user        User     @relation(fields: [userId], references: [id])
+}
